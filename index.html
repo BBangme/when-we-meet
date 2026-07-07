@@ -3,31 +3,28 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>우리 언제 만나? - 라이브 버전</title>
+    <title>우리 언제 만나? - 비밀방 버전</title>
     
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
     
     <style>
         body { font-family: 'Malgun Gothic', sans-serif; text-align: center; margin-top: 50px; background-color: #f9f9f9; }
         .container { max-width: 400px; margin: auto; padding: 30px; background: white; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
-        h2 { color: #333; }
+        h2 { color: #333; margin-bottom: 5px; }
+        .room-title { color: #ff6b6b; font-size: 0.9em; font-weight: bold; margin-bottom: 25px; }
         input[type="text"] { width: 85%; padding: 12px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 5px; font-size: 1em; box-sizing: border-box; text-align: center; cursor: pointer; }
         
-        /* 버튼들을 감싸는 영역 */
         .btn-group { display: flex; justify-content: space-between; width: 85%; margin: 0 auto; gap: 10px; }
         button { padding: 12px 20px; color: white; border: none; border-radius: 8px; font-size: 1.1em; cursor: pointer; font-weight: bold; }
         
-        /* 제출 버튼은 기존 크기 유지 및 확장 */
         #submitBtn { background-color: #ff6b6b; flex: 2; }
         #submitBtn:hover { background-color: #ff5252; }
         
-        /* 🌟 초기화 버튼 디자인 (눈에 띄게 회색 계열로 추가) */
         #resetBtn { background-color: #78909c; flex: 1; font-size: 0.95em; }
         #resetBtn:hover { background-color: #607d8b; }
         
         #results { margin-top: 25px; padding: 20px; background-color: #e3f2fd; border-radius: 8px; display: none; line-height: 1.6; text-align: left; }
-        .user-list { margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px dashed #90caf9; }
-        .user-list p { margin: 5px 0; font-size: 0.95em; }
+        .user-list { margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px dashed #90caf9; font-size: 0.95em; }
         .highlight { color: #2e7d32; font-weight: bold; font-size: 1.2em; } 
     </style>
 </head>
@@ -35,12 +32,14 @@
 
     <div class="container">
         <h2>우리 언제 만나? 🗓️</h2>
+        <div class="room-title" id="roomDisplay">🏠 로딩 중...</div>
+
         <input type="text" id="userName" placeholder="너의 이름을 입력해 줘!" required>
         <input type="text" id="calendar" placeholder="📅 클릭해서 가능한 날짜 모두 선택!" readonly>
         
         <div class="btn-group">
             <button id="submitBtn">일정 제출하기</button>
-            <button id="resetBtn">초기화</button>
+            <button id="resetBtn">방 초기화</button>
         </div>
 
         <div id="results">아직 입력된 일정이 없어. 첫 번째로 등록해 봐! ⏳</div>
@@ -50,7 +49,6 @@
     <script src="https://npmcdn.com/flatpickr/dist/l10n/ko.js"></script>
     
     <script type="module">
-        // 🌟 파이어베이스 기능 중 삭제를 위한 'deleteDoc' 추가 불러오기
         import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
         import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
 
@@ -66,15 +64,28 @@
         const app = initializeApp(firebaseConfig);
         const db = getFirestore(app);
 
+        // 🌟 [비밀방 로직] 주소창에서 방 이름을 가져오고, 없으면 랜덤 방 주소로 이동시킵니다.
+        const urlParams = new URLSearchParams(window.location.search);
+        let roomName = urlParams.get('room');
+
+        if (!roomName) {
+            // 접속할 때 주소 뒤에 room 파라미터가 없으면 랜덤한 5자리 방 이름을 만들어서 강제 이동시킵니다.
+            const randomRoom = Math.random().toString(36).substring(2, 7);
+            window.location.search = `?room=${randomRoom}`;
+        } else {
+            document.getElementById('roomDisplay').innerText = `🔒 현재 비밀방: ${roomName}`;
+        }
+
         let datePicker = flatpickr("#calendar", {
             mode: "multiple",
             dateFormat: "m월 d일", 
             locale: "ko"
         });
 
-        // 1. 데이터베이스에서 친구들 일정 불러오기
+        // 1. 해당 비밀방의 친구들 일정 불러오기
         async function loadSchedules() {
-            const querySnapshot = await getDocs(collection(db, "schedules"));
+            // 구조 변경: 각 방(roomName) 내부에 있는 일정을 가져옵니다.
+            const querySnapshot = await getDocs(collection(db, "rooms", roomName, "schedules"));
             let schedules = [];
             
             querySnapshot.forEach((doc) => {
@@ -94,7 +105,8 @@
 
             const selectedDates = selectedDatesText.split(', ');
 
-            await setDoc(doc(db, "schedules", name), {
+            // 해당 방(roomName)의 하위에 저장하도록 경로 변경
+            await setDoc(doc(db, "rooms", roomName, "schedules", name), {
                 dates: selectedDates
             });
 
@@ -103,27 +115,22 @@
             loadSchedules();
         }
 
-        // 🌟 3. 모든 데이터 초기화(삭제) 함수 추가!
+        // 3. 현재 방의 데이터만 초기화(삭제) 하기
         async function resetAllSchedules() {
-            // 실수로 누르는 걸 방지하기 위한 확인창
-            if (confirm("🚨 정말로 모든 친구들의 일정을 삭제하고 초기화할까?")) {
-                const querySnapshot = await getDocs(collection(db, "schedules"));
+            if (confirm("🚨 정말로 이 방의 모든 친구들 일정을 삭제하고 초기화할까?")) {
+                const querySnapshot = await getDocs(collection(db, "rooms", roomName, "schedules"));
                 
-                // 저장된 모든 문서를 하나씩 돌면서 삭제
                 const deletePromises = [];
                 querySnapshot.forEach((document) => {
-                    deletePromises.push(deleteDoc(doc(db, "schedules", document.id)));
+                    deletePromises.push(deleteDoc(doc(db, "rooms", roomName, "schedules", document.id)));
                 });
                 
-                // 모든 삭제 작업이 끝날 때까지 대기
                 await Promise.all(deletePromises);
-                
-                alert("🧹 모든 일정이 깔끔하게 초기화되었어!");
-                loadSchedules(); // 화면 갱신
+                alert("🧹 이 방의 모든 일정이 깔끔하게 초기화되었어!");
+                loadSchedules();
             }
         }
 
-        // 버튼들에 이벤트 연결
         document.getElementById('submitBtn').addEventListener('click', submitDates);
         document.getElementById('resetBtn').addEventListener('click', resetAllSchedules);
 
@@ -153,11 +160,12 @@
                 }
             }
 
-            let userListHTML = `<div class="user-list"><strong>👨‍👩‍👧‍👦 현재 입력 현황 (${totalPeople}명)</strong><br>`;
-            schedules.forEach(person => {
-                userListHTML += `<p>✔️ <b>${person.name}</b>: ${person.dates.join(', ')}</p>`;
-            });
-            userListHTML += `</div>`;
+            // 🌟 보완 1: 복잡한 날짜 표시는 지우고, 이름만 가로로 깔끔하게 나열하기!
+            const namesArray = schedules.map(person => person.name);
+            let userListHTML = `<div class="user-list">
+                <strong>👨‍👩‍👧‍👦 현재 입력 현황 (${totalPeople}명)</strong><br>
+                ${namesArray.join(', ')}
+            </div>`;
 
             let bestDateHTML = '';
             if (totalPeople === 1) {
