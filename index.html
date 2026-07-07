@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>우리 언제 만나? - 라이브 버전</title>
+    
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/flatpickr/dist/flatpickr.min.css">
+    
+    <style>
+        body { font-family: 'Malgun Gothic', sans-serif; text-align: center; margin-top: 50px; background-color: #f9f9f9; }
+        .container { max-width: 400px; margin: auto; padding: 30px; background: white; border-radius: 15px; box-shadow: 0 4px 8px rgba(0,0,0,0.1); }
+        h2 { color: #333; }
+        input[type="text"] { width: 85%; padding: 12px; margin-bottom: 20px; border: 1px solid #ccc; border-radius: 5px; font-size: 1em; box-sizing: border-box; text-align: center; cursor: pointer; }
+        
+        /* 버튼들을 감싸는 영역 */
+        .btn-group { display: flex; justify-content: space-between; width: 85%; margin: 0 auto; gap: 10px; }
+        button { padding: 12px 20px; color: white; border: none; border-radius: 8px; font-size: 1.1em; cursor: pointer; font-weight: bold; }
+        
+        /* 제출 버튼은 기존 크기 유지 및 확장 */
+        #submitBtn { background-color: #ff6b6b; flex: 2; }
+        #submitBtn:hover { background-color: #ff5252; }
+        
+        /* 🌟 초기화 버튼 디자인 (눈에 띄게 회색 계열로 추가) */
+        #resetBtn { background-color: #78909c; flex: 1; font-size: 0.95em; }
+        #resetBtn:hover { background-color: #607d8b; }
+        
+        #results { margin-top: 25px; padding: 20px; background-color: #e3f2fd; border-radius: 8px; display: none; line-height: 1.6; text-align: left; }
+        .user-list { margin-bottom: 15px; padding-bottom: 15px; border-bottom: 1px dashed #90caf9; }
+        .user-list p { margin: 5px 0; font-size: 0.95em; }
+        .highlight { color: #2e7d32; font-weight: bold; font-size: 1.2em; } 
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <h2>우리 언제 만나? 🗓️</h2>
+        <input type="text" id="userName" placeholder="너의 이름을 입력해 줘!" required>
+        <input type="text" id="calendar" placeholder="📅 클릭해서 가능한 날짜 모두 선택!" readonly>
+        
+        <div class="btn-group">
+            <button id="submitBtn">일정 제출하기</button>
+            <button id="resetBtn">초기화</button>
+        </div>
+
+        <div id="results">아직 입력된 일정이 없어. 첫 번째로 등록해 봐! ⏳</div>
+    </div>
+
+    <script src="https://cdn.jsdelivr.net/npm/flatpickr"></script>
+    <script src="https://npmcdn.com/flatpickr/dist/l10n/ko.js"></script>
+    
+    <script type="module">
+        // 🌟 파이어베이스 기능 중 삭제를 위한 'deleteDoc' 추가 불러오기
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-app.js";
+        import { getFirestore, collection, doc, setDoc, getDocs, deleteDoc } from "https://www.gstatic.com/firebasejs/12.15.0/firebase-firestore.js";
+
+        const firebaseConfig = {
+            apiKey: "AIzaSyBFgVu7bYm5rU-gVlcH9UOpB0d5IAoqM9I",
+            authDomain: "when-we-meet-ab75e.firebaseapp.com",
+            projectId: "when-we-meet-ab75e",
+            storageBucket: "when-we-meet-ab75e.firebasestorage.app",
+            messagingSenderId: "924229362789",
+            appId: "1:924229362789:web:f188ae8799acbf3bb9528c"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+
+        let datePicker = flatpickr("#calendar", {
+            mode: "multiple",
+            dateFormat: "m월 d일", 
+            locale: "ko"
+        });
+
+        // 1. 데이터베이스에서 친구들 일정 불러오기
+        async function loadSchedules() {
+            const querySnapshot = await getDocs(collection(db, "schedules"));
+            let schedules = [];
+            
+            querySnapshot.forEach((doc) => {
+                schedules.push({ name: doc.id, dates: doc.data().dates });
+            });
+
+            calculateBestDate(schedules);
+        }
+
+        // 2. 내 일정을 데이터베이스에 저장하기
+        async function submitDates() {
+            const name = document.getElementById('userName').value;
+            const selectedDatesText = document.getElementById('calendar').value;
+
+            if (!name) { alert('이름을 꼭 입력해 줘!'); return; }
+            if (!selectedDatesText) { alert('날짜를 하나 이상 선택해 줘!'); return; }
+
+            const selectedDates = selectedDatesText.split(', ');
+
+            await setDoc(doc(db, "schedules", name), {
+                dates: selectedDates
+            });
+
+            document.getElementById('userName').value = ''; 
+            datePicker.clear(); 
+            loadSchedules();
+        }
+
+        // 🌟 3. 모든 데이터 초기화(삭제) 함수 추가!
+        async function resetAllSchedules() {
+            // 실수로 누르는 걸 방지하기 위한 확인창
+            if (confirm("🚨 정말로 모든 친구들의 일정을 삭제하고 초기화할까?")) {
+                const querySnapshot = await getDocs(collection(db, "schedules"));
+                
+                // 저장된 모든 문서를 하나씩 돌면서 삭제
+                const deletePromises = [];
+                querySnapshot.forEach((document) => {
+                    deletePromises.push(deleteDoc(doc(db, "schedules", document.id)));
+                });
+                
+                // 모든 삭제 작업이 끝날 때까지 대기
+                await Promise.all(deletePromises);
+                
+                alert("🧹 모든 일정이 깔끔하게 초기화되었어!");
+                loadSchedules(); // 화면 갱신
+            }
+        }
+
+        // 버튼들에 이벤트 연결
+        document.getElementById('submitBtn').addEventListener('click', submitDates);
+        document.getElementById('resetBtn').addEventListener('click', resetAllSchedules);
+
+        // 4. 결과 계산 및 화면에 보여주기
+        function calculateBestDate(schedules) {
+            const resultDiv = document.getElementById('results');
+            resultDiv.style.display = 'block';
+
+            if (schedules.length === 0) {
+                resultDiv.innerHTML = "아직 입력된 일정이 없어. 첫 번째로 등록해 봐! ⏳";
+                return;
+            }
+
+            const dateCounts = {};
+            schedules.forEach(person => {
+                person.dates.forEach(date => {
+                    dateCounts[date] = (dateCounts[date] || 0) + 1;
+                });
+            });
+
+            const totalPeople = schedules.length; 
+            let allAvailableDates = []; 
+
+            for (const date in dateCounts) {
+                if (dateCounts[date] === totalPeople) {
+                    allAvailableDates.push(date);
+                }
+            }
+
+            let userListHTML = `<div class="user-list"><strong>👨‍👩‍👧‍👦 현재 입력 현황 (${totalPeople}명)</strong><br>`;
+            schedules.forEach(person => {
+                userListHTML += `<p>✔️ <b>${person.name}</b>: ${person.dates.join(', ')}</p>`;
+            });
+            userListHTML += `</div>`;
+
+            let bestDateHTML = '';
+            if (totalPeople === 1) {
+                bestDateHTML = `아직 혼자네! 다른 친구들의 입력을 기다려 보자. ⏳`;
+            } else if (allAvailableDates.length > 0) {
+                bestDateHTML = `🎉 <strong>전원 참석 가능한 날!</strong><br>
+                <span class="highlight">${allAvailableDates.join(', ')}</span>`;
+            } else {
+                bestDateHTML = `😢 전원이 다 되는 날은 없네... 누군가 양보하거나 일정을 다시 조율해 보자!`;
+            }
+
+            resultDiv.innerHTML = userListHTML + bestDateHTML;
+        }
+
+        loadSchedules();
+    </script>
+</body>
+</html>
